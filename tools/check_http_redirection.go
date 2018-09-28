@@ -1,5 +1,7 @@
 package main
 
+// Checks an URL redirects correctly to another
+
 import (
 	"fmt"
 	"net/http"
