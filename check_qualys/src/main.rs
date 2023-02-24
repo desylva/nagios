@@ -1,3 +1,4 @@
+use addr::DomainName;
 use clap::Parser;
 use indicatif::ProgressBar;
 use reqwest::blocking::get;
@@ -5,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use std::process::exit;
 use std::thread;
 use std::time::Duration;
-use addr::{DomainName};
 
 /// Use the Qualys API to perform
 /// a deep analysis of the configuration of any SSL web server on the public Internet.
@@ -90,8 +90,7 @@ impl Status {
         if self.status == "ERROR" {
             self.message = response
                 .status_message
-                .as_ref()
-                .map(String::as_str)
+                .as_deref()
                 .unwrap_or_default()
                 .to_string();
             self.exit_code = 3;
@@ -102,8 +101,7 @@ impl Status {
         } else {
             self.message = response
                 .status_message
-                .as_ref()
-                .map(String::as_str)
+                .as_deref()
                 .unwrap_or_default()
                 .to_string();
             self.exit_code = 3;
@@ -168,13 +166,13 @@ fn main() {
 
     let mut count = 0;
     let bar = ProgressBar::new(cli.attemps.into());
-    while status.ready == false {
+    while !status.ready {
         count += 1;
 
         let api_response_body = get_api_body(&cli);
         status = process_response_body(api_response_body, status);
 
-        if status.ready == false {
+        if !status.ready {
             let pause_duration = Duration::from_secs(10);
             thread::sleep(pause_duration);
         }
@@ -207,7 +205,10 @@ fn get_api_body(cli: &Cli) -> String {
 
     let request_url = format!(
         "{}{}{}{}",
-        "https://api.ssllabs.com/api/v3/analyze?host=", params.domain, params.publish, params.caching
+        "https://api.ssllabs.com/api/v3/analyze?host=",
+        params.domain,
+        params.publish,
+        params.caching
     );
     let response = get(request_url);
     let content = match response {
@@ -230,16 +231,8 @@ fn process_response_body(body: String, mut status: Status) -> Status {
     match response.endpoints {
         Some(endpoints) => {
             if let Some(endpoint) = endpoints.first() {
-                let grade = endpoint
-                    .grade
-                    .as_ref()
-                    .map(String::as_str)
-                    .unwrap_or_default();
-                let status_message = endpoint
-                    .status_message
-                    .as_ref()
-                    .map(String::as_str)
-                    .unwrap_or_default();
+                let grade = endpoint.grade.as_deref().unwrap_or_default();
+                let status_message = endpoint.status_message.as_deref().unwrap_or_default();
                 status.set_ready(status_message);
                 status.grade = grade.to_string();
                 status.set_exit_code();
