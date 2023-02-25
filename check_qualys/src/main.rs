@@ -1,12 +1,12 @@
-use addr::DomainName;
+use addr::parse_domain_name;
 use clap::Parser;
 use indicatif::ProgressBar;
 use reqwest::blocking::get;
 use serde::{Deserialize, Serialize};
-use std::{error::Error, process};
 use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
+use std::{error::Error, process};
 use strum_macros::{Display, EnumString};
 
 /// Use the Qualys API to perform
@@ -166,16 +166,16 @@ impl Default for Status {
     }
 }
 
-struct Params {
-    domain: DomainName,
+struct Params<'a> {
+    domain: addr::domain::Name<'a>,
     caching: String,
     publish: String,
 }
 
-impl Params {
-    fn new() -> Params {
+impl Params<'_> {
+    fn new() -> Params<'static> {
         Params {
-            domain: "www.example.com".parse().unwrap(),
+            domain: parse_domain_name("www.example.com").unwrap(),
             caching: "&fromCache=off".to_string(),
             publish: "&publish=off".to_string(),
         }
@@ -236,7 +236,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     if status.exit_code == 0 {
-        return Ok(print_result(&status, &cli));
+        print_result(&status, &cli);
+        return Ok(());
     }
     print_error(&status, &cli);
     process::exit(status.exit_code);
@@ -246,7 +247,7 @@ fn get_api_body(cli: &Cli) -> Result<String, Box<dyn Error>> {
     let mut params = Params::new();
     params.caching(cli.from_cache);
     params.publish(cli.publish);
-    params.domain = match cli.domain.parse() {
+    params.domain = match addr::parse_domain_name(cli.domain.as_str()) {
         Ok(domain) => domain,
         Err(error) => {
             panic!("Invalid domain URL: {}", error);
@@ -316,7 +317,12 @@ fn print_result(status: &Status, cli: &Cli) {
 }
 
 fn print_error(status: &Status, cli: &Cli) {
-    eprintln!("{}: {} - {}", status.status.to_string().to_uppercase(), status.error.as_ref().unwrap(), status.message.as_ref().unwrap());
+    eprintln!(
+        "{}: {} - {}",
+        status.status.to_string().to_uppercase(),
+        status.error.as_ref().unwrap(),
+        status.message.as_ref().unwrap()
+    );
     if cli.verbose {
         println!("{:?}", status);
     };
