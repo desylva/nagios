@@ -243,15 +243,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     process::exit(status.exit_code);
 }
 
-fn get_api_body(cli: &Cli) -> Result<String, Box<dyn Error>> {
+fn get_api_body(cli: &Cli) -> Result<String, Box<dyn Error + '_>> {
     let mut params = Params::new();
     params.caching(cli.from_cache);
     params.publish(cli.publish);
     params.domain = match addr::parse_domain_name(cli.domain.as_str()) {
         Ok(domain) => domain,
-        Err(error) => {
-            panic!("Invalid domain URL: {}", error);
-        }
+        Err(e) => return Err(Box::new(e)),
     };
 
     let request_url = format!(
