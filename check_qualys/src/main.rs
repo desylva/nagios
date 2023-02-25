@@ -199,7 +199,7 @@ impl Params<'_> {
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     if cli.verbose {
-        println!("CLI parameters: {:?}", &cli);
+        eprintln!("CLI parameters: {:?}", &cli);
     }
 
     let mut status = Status::default();
@@ -267,7 +267,7 @@ fn get_api_body(cli: &Cli) -> Result<String, Box<dyn Error>> {
         Err(e) => return Err(Box::new(e)),
     };
     if cli.verbose {
-        println!("API Response: {}", content);
+        eprintln!("API Response: {}", content);
     }
     Ok(content)
 }
@@ -312,7 +312,7 @@ fn print_result(status: &Status, cli: &Cli) {
     }
 
     if cli.verbose {
-        println!("{:?}", status);
+        eprintln!("{:?}", status);
     };
 }
 
@@ -324,6 +324,6 @@ fn print_error(status: &Status, cli: &Cli) {
         status.message.as_ref().unwrap()
     );
     if cli.verbose {
-        println!("{:?}", status);
+        eprintln!("{:?}", status);
     };
 }
