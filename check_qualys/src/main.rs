@@ -3,8 +3,7 @@ use clap::Parser;
 use indicatif::ProgressBar;
 use reqwest::blocking::get;
 use serde::{Deserialize, Serialize};
-use std::error::Error;
-use std::process::exit;
+use std::{error::Error, process};
 use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
@@ -236,8 +235,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         bar.finish();
     }
 
-    print_result(&status, &cli);
-    exit(status.exit_code);
+    if status.exit_code == 0 {
+        return Ok(print_result(&status, &cli));
+    }
+    print_error(&status, &cli);
+    process::exit(status.exit_code);
 }
 
 fn get_api_body(cli: &Cli) -> Result<String, Box<dyn Error>> {
@@ -301,9 +303,20 @@ fn process_response_body(body: String, mut status: Status) -> Result<Status, Box
 
 fn print_result(status: &Status, cli: &Cli) {
     if status.grade.is_some() {
-        println!("{}", status.grade.as_ref().unwrap());
+        let state = status.status.to_string().to_uppercase();
+        let grade = status.grade.as_ref().unwrap().to_string();
+        println!("{}: {}", state, grade);
+    } else {
+        println!("{}", status.status.to_string().to_uppercase());
     }
 
+    if cli.verbose {
+        println!("{:?}", status);
+    };
+}
+
+fn print_error(status: &Status, cli: &Cli) {
+    eprintln!("{}: {} - {}", status.status.to_string().to_uppercase(), status.error.as_ref().unwrap(), status.message.as_ref().unwrap());
     if cli.verbose {
         println!("{:?}", status);
     };
