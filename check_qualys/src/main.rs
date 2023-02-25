@@ -3,9 +3,12 @@ use clap::Parser;
 use indicatif::ProgressBar;
 use reqwest::blocking::get;
 use serde::{Deserialize, Serialize};
+use std::error::Error;
 use std::process::exit;
+use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
+use strum_macros::{Display, EnumString};
 
 /// Use the Qualys API to perform
 /// a deep analysis of the configuration of any SSL web server on the public Internet.
@@ -59,69 +62,107 @@ struct Response {
 #[derive(Debug)]
 struct Status {
     ready: bool,
-    status: String,
-    error: String,
-    grade: String,
-    message: String,
+    status: State,
+    error: Option<String>,
+    grade: Option<Grade>,
+    message: Option<String>,
     exit_code: i32,
 }
 
+#[derive(Display, Debug, Eq, PartialEq, EnumString)]
+#[strum(serialize_all = "UPPERCASE")]
+enum State {
+    Dns,
+    Error,
+    #[strum(
+        serialize = "IN_PROGRESS",
+        serialize = "INPROGRESS",
+        serialize = "IN PROGRESS"
+    )]
+    InProgress,
+    Ready,
+    Unknown,
+}
+
+#[derive(Display, Debug, PartialEq, EnumString)]
+enum Grade {
+    #[strum(serialize = "A+")]
+    APlus,
+    A,
+    #[strum(serialize = "A-")]
+    AMinus,
+    B,
+    C,
+    D,
+    E,
+    F,
+    M,
+    T,
+}
+
 impl Status {
-    fn new() -> Status {
-        Status {
-            ready: false,
-            status: "".to_string(),
-            grade: "".to_string(),
-            message: "".to_string(),
-            error: "".to_string(),
-            exit_code: 0,
-        }
-    }
-
     fn set_response(&mut self, response: &Response) {
-        match response.status.as_str() {
-            "DNS" => self.status = "DNS".to_string(),
-            "ERROR" => self.status = "ERROR".to_string(),
-            "IN_PROGRESS" => self.status = "IN_PROGRESS".to_string(),
-            "READY" => self.status = "OK".to_string(),
-            _ => self.status = "UNKOWN".to_string(),
+        if !response.status.is_empty() {
+            self.status = match State::from_str(response.status.as_str()) {
+                Ok(st) => st,
+                Err(e) => panic!("Error occurred: {:?}", e),
+            };
         }
 
-        if self.status == "ERROR" {
+        if self.status == State::Error {
             self.message = response
                 .status_message
                 .as_deref()
-                .unwrap_or_default()
-                .to_string();
+                .map(|status| status.to_string());
             self.exit_code = 3;
             self.ready = true;
-        } else if self.status == "IN_PROGRESS" || self.status == "READY" || self.status == "DNS" {
+        } else if self.status == State::InProgress
+            || self.status == State::Ready
+            || self.status == State::Dns
+        {
             self.exit_code = 0;
             self.ready = false;
         } else {
             self.message = response
                 .status_message
                 .as_deref()
-                .unwrap_or_default()
-                .to_string();
+                .map(|status| status.to_string());
             self.exit_code = 3;
             self.ready = true;
         }
     }
 
     fn set_ready(&mut self, status_message: &str) {
-        self.status = status_message.to_string();
-        if self.status == "Ready" {
+        if State::from_str(status_message).is_ok() {
+            self.status = State::from_str(status_message).unwrap();
+        };
+        if self.status == State::Ready {
             self.ready = true;
         }
     }
 
     fn set_exit_code(&mut self) {
-        match self.grade.as_str() {
-            "A" | "A+" => self.exit_code = 0,
-            "A-" => self.exit_code = 1,
-            "B" | "C" | "D" | "E" | "F" | "M" | "T" => self.exit_code = 2,
-            _ => self.exit_code = 2,
+        if self.grade.is_some() {
+            match self.grade {
+                Some(Grade::A) | Some(Grade::APlus) => self.exit_code = 0,
+                Some(Grade::AMinus) => self.exit_code = 1,
+                Some(Grade::B) | Some(Grade::C) | Some(Grade::D) | Some(Grade::E)
+                | Some(Grade::F) | Some(Grade::M) | Some(Grade::T) => self.exit_code = 2,
+                _ => self.exit_code = 2,
+            }
+        }
+    }
+}
+
+impl Default for Status {
+    fn default() -> Self {
+        Status {
+            ready: false,
+            status: State::Unknown,
+            error: None,
+            grade: None,
+            message: None,
+            exit_code: 0,
         }
     }
 }
@@ -156,21 +197,28 @@ impl Params {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     if cli.verbose {
         println!("CLI parameters: {:?}", &cli);
     }
 
-    let mut status = Status::new();
+    let mut status = Status::default();
 
     let mut count = 0;
     let bar = ProgressBar::new(cli.attemps.into());
     while !status.ready {
         count += 1;
 
-        let api_response_body = get_api_body(&cli);
-        status = process_response_body(api_response_body, status);
+        let api_response_body = match get_api_body(&cli) {
+            Ok(st) => st,
+            Err(e) => panic!("{}", e),
+        };
+
+        status = match process_response_body(api_response_body, status) {
+            Ok(st) => st,
+            Err(e) => panic!("{}", e),
+        };
 
         if !status.ready {
             let pause_duration = Duration::from_secs(10);
@@ -192,7 +240,7 @@ fn main() {
     exit(status.exit_code);
 }
 
-fn get_api_body(cli: &Cli) -> String {
+fn get_api_body(cli: &Cli) -> Result<String, Box<dyn Error>> {
     let mut params = Params::new();
     params.caching(cli.from_cache);
     params.publish(cli.publish);
@@ -213,17 +261,15 @@ fn get_api_body(cli: &Cli) -> String {
     let response = get(request_url);
     let content = match response {
         Ok(content) => content.text().unwrap(),
-        Err(error) => {
-            panic!("API error: {}", error);
-        }
+        Err(e) => return Err(Box::new(e)),
     };
     if cli.verbose {
         println!("API Response: {}", content);
     }
-    content
+    Ok(content)
 }
 
-fn process_response_body(body: String, mut status: Status) -> Status {
+fn process_response_body(body: String, mut status: Status) -> Result<Status, Box<dyn Error>> {
     let response: Response = serde_json::from_str(&body).unwrap();
     // i.e. Unable to resolve domain name
     status.set_response(&response);
@@ -234,32 +280,28 @@ fn process_response_body(body: String, mut status: Status) -> Status {
                 let grade = endpoint.grade.as_deref().unwrap_or_default();
                 let status_message = endpoint.status_message.as_deref().unwrap_or_default();
                 status.set_ready(status_message);
-                status.grade = grade.to_string();
+                if !grade.is_empty() {
+                    status.grade = Some(Grade::from_str(grade).unwrap());
+                }
                 status.set_exit_code();
             } else {
                 status.exit_code = 3;
-                status.status = "ERROR".to_string();
-                status.error = "Endpoint not ready".to_string();
+                status.status = State::Error;
+                status.error = Some("Endpoint not ready".to_string());
             }
         }
         None => {
             status.exit_code = 3;
-            status.status = "ERROR".to_string();
-            status.error = "No endpoint".to_string();
+            status.status = State::Error;
+            status.error = Some("No endpoint".to_string());
         }
     }
-    status
+    Ok(status)
 }
 
 fn print_result(status: &Status, cli: &Cli) {
-    if status.grade.is_empty() && !status.message.is_empty() {
-        println!("{}: {}", status.status, status.message);
-    } else if !status.grade.is_empty() && status.message.is_empty() {
-        println!("{}", status.grade);
-    } else if status.exit_code != 0 {
-        println!("{}: {}", status.status, status.error);
-    } else {
-        println!("{} {} {}", status.status, status.message, status.error)
+    if status.grade.is_some() {
+        println!("{}", status.grade.as_ref().unwrap());
     }
 
     if cli.verbose {
